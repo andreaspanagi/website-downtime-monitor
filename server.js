@@ -124,10 +124,6 @@ io.on('connection', (socket) => {
 // ROUTES
 // ====================
 
-// CRITICAL: Attach Socket.IO engine middleware to Express
-// This ensures Socket.IO properly handles /socket.io/* requests on reverse proxies
-app.use(io.engine.middleware);
-
 // Dashboard routes (mounted at root path)
 app.use('/', dashboardRoutes);
 
