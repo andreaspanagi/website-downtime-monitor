@@ -33,8 +33,7 @@ const io = socketIo(server, {
   // Enable CORS to allow connections from any origin
   cors: { origin: '*' }
 });
-console.log('*** SOCKET.IO INITIALIZED ***');
-console.log('Socket.IO version:', require('socket.io/package.json').version);
+
 // Make io globally accessible so monitorService can emit events to all connected clients
 global.io = io;
 

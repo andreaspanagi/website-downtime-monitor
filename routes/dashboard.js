@@ -21,11 +21,6 @@ const { checkAllLinks } = require('../services/linkCheckerService');
 // DASHBOARD VIEW ROUTES
 // ====================
 
-
-app.get('/socket-test', (req, res) => {
-  res.send('Socket server application is running');
-});
-
 /**
  * GET / - Main dashboard page
  * Displays the monitoring dashboard with status, history, and link checker
@@ -42,13 +37,9 @@ router.get('/', async (req, res) => {
       });
     }
     
-    // Pre-compute website IDs for client-side use
-    const websiteIds = websites.map(w => w._id.toString());
-    
     // Render dashboard template with websites data
     res.render('dashboard', { 
-      websites: websites,
-      websiteIds: websiteIds
+      websites: websites 
     });
     
   } catch (error) {
