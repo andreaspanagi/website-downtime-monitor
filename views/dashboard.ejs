@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Website Monitor - Dashboard</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/dashboard.css">
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- Page Header -->
+    <div class="page-header">
+      <h1 class="page-header__title">🔍 Website Monitor Dashboard</h1>
+      <p class="page-header__description">Real-time monitoring of <%= websites.length %> website<%= websites.length !== 1 ? 's' : '' %></p>
+    </div>
+    
+    <!-- Summary Statistics -->
+    <div class="summary-stats">
+      <div class="summary-card">
+        <div class="summary-card__label">Total Sites</div>
+        <div class="summary-card__number summary-card__number--total" id="total-sites"><%= websites.length %></div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-card__label">Sites Up</div>
+        <div class="summary-card__number summary-card__number--up" id="sites-up">
+          <%= websites.filter(w => w.currentStatus === 'up').length %>
+        </div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-card__label">Sites Down</div>
+        <div class="summary-card__number summary-card__number--down" id="sites-down">
+          <%= websites.filter(w => w.currentStatus === 'down').length %>
+        </div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-card__label">Average Uptime</div>
+        <div class="summary-card__number summary-card__number--total" id="avg-uptime">-</div>
+      </div>
+    </div>
+    
+    <!-- Websites Grid -->
+    <div class="websites-grid">
+      <% websites.forEach(function(website) { %>
+        <div class="website-card website-card--<%= website.currentStatus %>" data-website-id="<%= website._id %>">
+          <!-- Website Header -->
+          <div class="website-header">
+            <div class="website-header__url"><%= website.url %></div>
+            <span class="status-badge status-badge--<%= website.currentStatus %>">
+              <% if (website.currentStatus === 'up') { %>
+                🟢 UP
+              <% } else if (website.currentStatus === 'down') { %>
+                🔴 DOWN
+              <% } else { %>
+                ⚪ UNKNOWN
+              <% } %>
+            </span>
+          </div>
+          
+          <!-- Website Stats -->
+          <div class="website-stats">
+            <div class="stat-item">
+              <div class="stat-item__label">Response Time</div>
+              <div class="stat-item__value" data-stat="response-time">-</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-item__label">Status Code</div>
+              <div class="stat-item__value" data-stat="status-code">-</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-item__label">24h Uptime</div>
+              <div class="stat-item__value" data-stat="uptime">-</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-item__label">Total Checks</div>
+              <div class="stat-item__value" data-stat="check-count">-</div>
+            </div>
+          </div>
+          
+          <!-- Last Checked -->
+          <div class="last-checked" data-stat="last-checked">
+            Last checked: <%= website.lastChecked ? new Date(website.lastChecked).toLocaleString() : 'Never' %>
+          </div>
+          
+          <!-- Website Actions -->
+          <div class="website-actions">
+            <button class="btn btn--primary btn--full-width check-website-btn" data-website-id="<%= website._id %>">
+              Check Now
+            </button>
+          </div>
+        </div>
+      <% }); %>
+    </div>
+  </div>
+  
+  <script>
+    // Store website IDs for tracking
+    const websiteIds = <%- JSON.stringify(websiteIds) %>;
+    
+    // Connect to Socket.io
+    const socket = io();
+    
+    // Socket connection handlers
+    socket.on('connect', () => {
+      console.log('✓ Connected to monitoring server');
+    });
+    
+    socket.on('disconnect', () => {
+      console.log('✗ Disconnected from monitoring server');
+    });
+    
+    // Handle check completed event
+    socket.on('checkCompleted', (data) => {
+      console.log('✓ Check completed:', data);
+      
+      const websiteId = data.website.id;
+      const card = document.querySelector(`[data-website-id="${websiteId}"]`);
+      
+      if (card) {
+        // Update status badge
+        const statusBadge = card.querySelector('.status-badge');
+        if (statusBadge) {
+          const status = data.checkResult.status;
+          statusBadge.className = `status-badge status-badge--${status}`;
+          statusBadge.innerHTML = status === 'up' ? '🟢 UP' : '🔴 DOWN';
+        }
+        
+        // Update card border
+        card.className = `website-card website-card--${data.checkResult.status}`;
+        
+        // Update stats
+        const responseTime = card.querySelector('[data-stat="response-time"]');
+        if (responseTime) {
+          responseTime.textContent = data.checkResult.responseTime + 'ms';
+        }
+        
+        const statusCode = card.querySelector('[data-stat="status-code"]');
+        if (statusCode) {
+          statusCode.textContent = data.checkResult.statusCode || 'N/A';
+        }
+        
+        const lastChecked = card.querySelector('[data-stat="last-checked"]');
+        if (lastChecked) {
+          lastChecked.textContent = 'Last checked: ' + new Date(data.checkResult.timestamp).toLocaleString();
+        }
+        
+        // Update summary stats
+        updateSummaryStats();
+        
+        // Load stats for this website
+        loadWebsiteStats(websiteId, card);
+      }
+    });
+    
+    // Handle alert triggered event
+    socket.on('alertTriggered', (data) => {
+      console.log('🚨 Alert triggered:', data);
+      showNotification(data);
+      updateSummaryStats();
+    });
+    
+    // Update summary statistics
+    function updateSummaryStats() {
+      const cards = document.querySelectorAll('.website-card');
+      let upCount = 0;
+      let downCount = 0;
+      
+      cards.forEach(card => {
+        if (card.classList.contains('website-card--up')) upCount++;
+        if (card.classList.contains('website-card--down')) downCount++;
+      });
+      
+      document.getElementById('sites-up').textContent = upCount;
+      document.getElementById('sites-down').textContent = downCount;
+    }
+    
+    // Load statistics for a specific website
+    async function loadWebsiteStats(websiteId, card) {
+      try {
+        // Fetch records for this website
+        const response = await fetch(`/api/records?websiteId=${websiteId}&hours=24&limit=100`);
+        const data = await response.json();
+        
+        if (data.success && data.data.records.length > 0) {
+          const records = data.data.records;
+          
+          // Calculate uptime
+          const upCount = records.filter(r => r.status === 'up').length;
+          const uptimePercent = Math.round((upCount / records.length) * 100);
+          
+          const uptimeEl = card.querySelector('[data-stat="uptime"]');
+          if (uptimeEl) {
+            uptimeEl.textContent = uptimePercent + '%';
+          }
+          
+          const checkCountEl = card.querySelector('[data-stat="check-count"]');
+          if (checkCountEl) {
+            checkCountEl.textContent = records.length;
+          }
+        }
+      } catch (error) {
+        console.error('Error loading stats for website:', websiteId, error);
+      }
+    }
+    
+    // Show notification
+    function showNotification(alert) {
+      const notification = document.createElement('div');
+      notification.className = `notification notification--${alert.event} notification--slide-in`;
+      
+      notification.innerHTML = `
+        <strong>${alert.event.toUpperCase()}!</strong><br>
+        ${alert.website} is now ${alert.newStatus}
+      `;
+      
+      document.body.appendChild(notification);
+      
+      setTimeout(() => {
+        notification.classList.remove('notification--slide-in');
+        notification.classList.add('notification--slide-out');
+        setTimeout(() => notification.remove(), 300);
+      }, 5000);
+    }
+    
+    // Setup button listeners
+    document.addEventListener('DOMContentLoaded', () => {
+      console.log('Dashboard loaded');
+      
+      // Load stats for all websites
+      websiteIds.forEach(websiteId => {
+        const card = document.querySelector(`[data-website-id="${websiteId}"]`);
+        if (card) {
+          loadWebsiteStats(websiteId, card);
+        }
+      });
+      
+      // Setup check buttons
+      document.querySelectorAll('.check-website-btn').forEach(btn => {
+        btn.addEventListener('click', async function() {
+          const websiteId = this.dataset.websiteId;
+          
+          this.disabled = true;
+          this.textContent = 'Checking...';
+          
+          try {
+            const response = await fetch('/api/manualCheck', { 
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ websiteId: websiteId })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+              console.log('✓ Manual check triggered for', websiteId);
+            }
+          } catch (error) {
+            console.error('Error:', error);
+          } finally {
+            this.disabled = false;
+            this.textContent = 'Check Now';
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>
