@@ -39,7 +39,8 @@ const io = socketIo(server, {
   // Hostinger uses a reverse proxy - configure paths explicitly
   path: '/socket.io',
   // Support both WebSocket and polling for compatibility
-  transports: ['websocket', 'polling'],
+  transports: ['polling'],  // Polling ONLY - no WebSocket
+  allowUpgrades: false,      // NO WebSocket upgrade attempts
   // Increase timeout for Hostinger's infrastructure
   pingInterval: 25000,
   pingTimeout: 60000
