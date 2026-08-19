@@ -37,9 +37,13 @@ router.get('/', async (req, res) => {
       });
     }
     
+    // Extract website IDs for client-side tracking
+    const websiteIds = websites.map(w => w._id.toString());
+    
     // Render dashboard template with websites data
     res.render('dashboard', { 
-      websites: websites 
+      websites: websites,
+      websiteIds: websiteIds
     });
     
   } catch (error) {
