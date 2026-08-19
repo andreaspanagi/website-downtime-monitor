@@ -34,16 +34,32 @@ const io = socketIo(server, {
   cors: { 
     origin: '*',
     methods: ['GET', 'POST'],
+    credentials: true,
     allowEIO3: true
   },
   // Hostinger uses a reverse proxy - configure paths explicitly
   path: '/socket.io',
-  // Support both WebSocket and polling for compatibility
-  transports: ['polling'],  // Polling ONLY - no WebSocket
-  allowUpgrades: false,      // NO WebSocket upgrade attempts
+  // IMPORTANT: Hostinger does NOT support WebSocket on reverse proxy
+  // Use polling (HTTP Long-Polling) only - it's slower but reliable
+  transports: ['polling'],
   // Increase timeout for Hostinger's infrastructure
-  pingInterval: 25000,
-  pingTimeout: 60000
+  pingInterval: 30000,
+  pingTimeout: 90000,
+  // NO WebSocket upgrade on Hostinger
+  allowUpgrades: false,
+  // Maximum HTTP polling duration
+  maxHttpBufferSize: 1e6,
+  // Per-message compression
+  perMessageDeflate: false
+});
+
+// Debug Socket.IO connection attempts
+io.engine.on('connection_error', (err) => {
+  console.error('❌ Socket.IO connection_error:', err.code, err.message);
+});
+
+io.on('connection_error', (error) => {
+  console.error('❌ Socket.IO connection_error event:', error);
 });
 
 // Make io globally accessible so monitorService can emit events to all connected clients
