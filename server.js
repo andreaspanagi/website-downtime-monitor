@@ -31,7 +31,18 @@ const server = http.createServer(app);
 // Initialize Socket.io with the HTTP server
 const io = socketIo(server, {
   // Enable CORS to allow connections from any origin
-  cors: { origin: '*' }
+  cors: { 
+    origin: '*',
+    methods: ['GET', 'POST'],
+    allowEIO3: true
+  },
+  // Hostinger uses a reverse proxy - configure paths explicitly
+  path: '/socket.io',
+  // Support both WebSocket and polling for compatibility
+  transports: ['websocket', 'polling'],
+  // Increase timeout for Hostinger's infrastructure
+  pingInterval: 25000,
+  pingTimeout: 60000
 });
 
 // Make io globally accessible so monitorService can emit events to all connected clients

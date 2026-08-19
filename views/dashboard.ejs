@@ -6,7 +6,19 @@
   <title>Website Monitor - Dashboard</title>
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/css/dashboard.css">
+  <!-- Load Socket.IO client library -->
+  <!-- Primary: Use Socket.IO's own serving method -->
   <script src="/socket.io/socket.io.js"></script>
+  <!-- Fallback: CDN version if local fails (checks if io is undefined) -->
+  <script>
+    if (typeof io === 'undefined') {
+      console.warn('Socket.IO failed to load from /socket.io/socket.io.js, trying CDN...');
+      // Add CDN script as fallback
+      var script = document.createElement('script');
+      script.src = 'https://cdn.socket.io/4.5.4/socket.io.min.js';
+      document.head.appendChild(script);
+    }
+  </script>
 </head>
 <body>
   <div class="container">
@@ -38,6 +50,11 @@
         <div class="summary-card__label">Average Uptime</div>
         <div class="summary-card__number summary-card__number--total" id="avg-uptime">-</div>
       </div>
+    </div>
+    
+    <!-- Connection Status Indicator -->
+    <div id="connection-status" class="connection-status connection-status--disconnected">
+      <span id="connection-text">Connecting to monitoring server...</span>
     </div>
     
     <!-- Websites Grid -->
@@ -98,67 +115,118 @@
     // Store website IDs for tracking
     const websiteIds = <%- JSON.stringify(websiteIds) %>;
     
-    // Connect to Socket.io
-    const socket = io();
-    
-    // Socket connection handlers
-    socket.on('connect', () => {
-      console.log('✓ Connected to monitoring server');
-    });
-    
-    socket.on('disconnect', () => {
-      console.log('✗ Disconnected from monitoring server');
-    });
-    
-    // Handle check completed event
-    socket.on('checkCompleted', (data) => {
-      console.log('✓ Check completed:', data);
-      
-      const websiteId = data.website.id;
-      const card = document.querySelector(`[data-website-id="${websiteId}"]`);
-      
-      if (card) {
-        // Update status badge
-        const statusBadge = card.querySelector('.status-badge');
-        if (statusBadge) {
-          const status = data.checkResult.status;
-          statusBadge.className = `status-badge status-badge--${status}`;
-          statusBadge.innerHTML = status === 'up' ? '🟢 UP' : '🔴 DOWN';
-        }
-        
-        // Update card border
-        card.className = `website-card website-card--${data.checkResult.status}`;
-        
-        // Update stats
-        const responseTime = card.querySelector('[data-stat="response-time"]');
-        if (responseTime) {
-          responseTime.textContent = data.checkResult.responseTime + 'ms';
-        }
-        
-        const statusCode = card.querySelector('[data-stat="status-code"]');
-        if (statusCode) {
-          statusCode.textContent = data.checkResult.statusCode || 'N/A';
-        }
-        
-        const lastChecked = card.querySelector('[data-stat="last-checked"]');
-        if (lastChecked) {
-          lastChecked.textContent = 'Last checked: ' + new Date(data.checkResult.timestamp).toLocaleString();
-        }
-        
-        // Update summary stats
-        updateSummaryStats();
-        
-        // Load stats for this website
-        loadWebsiteStats(websiteId, card);
+    // Initialize Socket.IO with error handling
+    function initSocket() {
+      // Wait for socket.io library to load
+      if (typeof io === 'undefined') {
+        console.error('Socket.IO library failed to load. Retrying in 2 seconds...');
+        setTimeout(initSocket, 2000);
+        return;
       }
-    });
+      
+      // Connect to Socket.io with custom options for Hostinger
+      const socket = io({
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: 5,
+        path: '/socket.io',
+        transports: ['websocket', 'polling']
+      });
+      
+      // Socket connection handlers
+      socket.on('connect', () => {
+        console.log('✓ Connected to monitoring server');
+        updateConnectionStatus('connected');
+      });
+      
+      socket.on('connect_error', (error) => {
+        console.error('Connection error:', error);
+        updateConnectionStatus('error', error.message);
+      });
+      
+      socket.on('disconnect', () => {
+        console.log('✗ Disconnected from monitoring server');
+        updateConnectionStatus('disconnected');
+      });
+      
+      // Handle check completed event
+      socket.on('checkCompleted', (data) => {
+        console.log('✓ Check completed:', data);
+        
+        const websiteId = data.website.id;
+        const card = document.querySelector(`[data-website-id="${websiteId}"]`);
+        
+        if (card) {
+          // Update status badge
+          const statusBadge = card.querySelector('.status-badge');
+          if (statusBadge) {
+            const status = data.checkResult.status;
+            statusBadge.className = `status-badge status-badge--${status}`;
+            statusBadge.innerHTML = status === 'up' ? '🟢 UP' : '🔴 DOWN';
+          }
+          
+          // Update card border
+          card.className = `website-card website-card--${data.checkResult.status}`;
+          
+          // Update stats
+          const responseTime = card.querySelector('[data-stat="response-time"]');
+          if (responseTime) {
+            responseTime.textContent = data.checkResult.responseTime + 'ms';
+          }
+          
+          const statusCode = card.querySelector('[data-stat="status-code"]');
+          if (statusCode) {
+            statusCode.textContent = data.checkResult.statusCode || 'N/A';
+          }
+          
+          const lastChecked = card.querySelector('[data-stat="last-checked"]');
+          if (lastChecked) {
+            lastChecked.textContent = 'Last checked: ' + new Date(data.checkResult.timestamp).toLocaleString();
+          }
+          
+          // Update summary stats
+          updateSummaryStats();
+          
+          // Load stats for this website
+          loadWebsiteStats(websiteId, card);
+        }
+      });
+      
+      // Handle alert triggered event
+      socket.on('alertTriggered', (data) => {
+        console.log('🚨 Alert triggered:', data);
+        showNotification(data);
+        updateSummaryStats();
+      });
+      
+      // Store socket globally for manual checks
+      window.socket = socket;
+    }
     
-    // Handle alert triggered event
-    socket.on('alertTriggered', (data) => {
-      console.log('🚨 Alert triggered:', data);
-      showNotification(data);
-      updateSummaryStats();
-    });
+    // Update connection status display
+    function updateConnectionStatus(status, message = '') {
+      const statusEl = document.getElementById('connection-status');
+      const textEl = document.getElementById('connection-text');
+      
+      if (statusEl) {
+        statusEl.className = `connection-status connection-status--${status}`;
+        
+        switch (status) {
+          case 'connected':
+            textEl.textContent = '✓ Connected to monitoring server';
+            break;
+          case 'disconnected':
+            textEl.textContent = '✗ Disconnected - attempting to reconnect...';
+            break;
+          case 'error':
+            textEl.textContent = `⚠️ Connection error: ${message}`;
+            break;
+          default:
+            textEl.textContent = 'Connecting to monitoring server...';
+        }
+      }
+    }
     
     // Update summary statistics
     function updateSummaryStats() {
@@ -226,6 +294,9 @@
     // Setup button listeners
     document.addEventListener('DOMContentLoaded', () => {
       console.log('Dashboard loaded');
+      
+      // Initialize Socket.IO
+      initSocket();
       
       // Load stats for all websites
       websiteIds.forEach(websiteId => {
