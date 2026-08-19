@@ -21,6 +21,11 @@ const { checkAllLinks } = require('../services/linkCheckerService');
 // DASHBOARD VIEW ROUTES
 // ====================
 
+
+app.get('/socket-test', (req, res) => {
+  res.send('Socket server application is running');
+});
+
 /**
  * GET / - Main dashboard page
  * Displays the monitoring dashboard with status, history, and link checker
