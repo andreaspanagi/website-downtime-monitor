@@ -45,6 +45,47 @@ router.get('/status', async (req, res) => {
 });
 
 /**
+ * GET /api/websites/:id
+ * Get a specific website by ID (for polling fallback)
+ */
+router.get('/websites/:id', async (req, res) => {
+  try {
+    const websiteId = req.params.id;
+    
+    // Find the website
+    const website = await Website.findById(websiteId);
+    
+    if (!website) {
+      return res.status(404).json({
+        success: false,
+        message: 'Website not found'
+      });
+    }
+    
+    // Return website data
+    res.json({
+      success: true,
+      data: {
+        _id: website._id,
+        url: website.url,
+        currentStatus: website.currentStatus,
+        lastChecked: website.lastChecked,
+        lastResponseTime: website.lastResponseTime,
+        lastStatusCode: website.lastStatusCode,
+        isActive: website.isActive
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error getting website:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
  * GET /api/uptime
  * Get uptime percentage for a time period
  * Query params: hours (default: 24)

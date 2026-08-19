@@ -115,98 +115,17 @@
     // Store website IDs for tracking
     const websiteIds = <%- JSON.stringify(websiteIds) %>;
     
-    // Initialize Socket.IO with error handling
-    function initSocket() {
-      // Wait for socket.io library to load
-      if (typeof io === 'undefined') {
-        console.error('Socket.IO library failed to load. Retrying in 2 seconds...');
-        setTimeout(initSocket, 2000);
-        return;
-      }
-      
-      // Connect to Socket.io with custom options for Hostinger
-      const socket = io({
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-        reconnectionAttempts: 5,
-        path: '/socket.io',
-        transports: ['polling'],  // Polling ONLY
-        upgrade: false            // Disable WebSocket upgrade
-      });
-      
-      // Socket connection handlers
-      socket.on('connect', () => {
-        console.log('✓ Connected to monitoring server');
-        updateConnectionStatus('connected');
-      });
-      
-      socket.on('connect_error', (error) => {
-        console.error('Connection error:', error);
-        updateConnectionStatus('error', error.message);
-      });
-      
-      socket.on('disconnect', () => {
-        console.log('✗ Disconnected from monitoring server');
-        updateConnectionStatus('disconnected');
-      });
-      
-      // Handle check completed event
-      socket.on('checkCompleted', (data) => {
-        console.log('✓ Check completed:', data);
-        
-        const websiteId = data.website.id;
-        const card = document.querySelector(`[data-website-id="${websiteId}"]`);
-        
-        if (card) {
-          // Update status badge
-          const statusBadge = card.querySelector('.status-badge');
-          if (statusBadge) {
-            const status = data.checkResult.status;
-            statusBadge.className = `status-badge status-badge--${status}`;
-            statusBadge.innerHTML = status === 'up' ? '🟢 UP' : '🔴 DOWN';
-          }
-          
-          // Update card border
-          card.className = `website-card website-card--${data.checkResult.status}`;
-          
-          // Update stats
-          const responseTime = card.querySelector('[data-stat="response-time"]');
-          if (responseTime) {
-            responseTime.textContent = data.checkResult.responseTime + 'ms';
-          }
-          
-          const statusCode = card.querySelector('[data-stat="status-code"]');
-          if (statusCode) {
-            statusCode.textContent = data.checkResult.statusCode || 'N/A';
-          }
-          
-          const lastChecked = card.querySelector('[data-stat="last-checked"]');
-          if (lastChecked) {
-            lastChecked.textContent = 'Last checked: ' + new Date(data.checkResult.timestamp).toLocaleString();
-          }
-          
-          // Update summary stats
-          updateSummaryStats();
-          
-          // Load stats for this website
-          loadWebsiteStats(websiteId, card);
-        }
-      });
-      
-      // Handle alert triggered event
-      socket.on('alertTriggered', (data) => {
-        console.log('🚨 Alert triggered:', data);
-        showNotification(data);
-        updateSummaryStats();
-      });
-      
-      // Store socket globally for manual checks
-      window.socket = socket;
-    }
+    // Track connection mode and state
+    let connectionMode = 'socket'; // 'socket' or 'polling'
+    let socket = null;
+    let pollingTimer = null;
+    let socketFailureCount = 0;
+    const MAX_SOCKET_FAILURES = 3;
+    const POLL_INTERVAL = 10000; // 10 seconds
+    let previousStates = new Map();
     
     // Update connection status display
-    function updateConnectionStatus(status, message = '') {
+    function updateConnectionStatus(status, mode = connectionMode, message = '') {
       const statusEl = document.getElementById('connection-status');
       const textEl = document.getElementById('connection-text');
       
@@ -215,13 +134,20 @@
         
         switch (status) {
           case 'connected':
-            textEl.textContent = '✓ Connected to monitoring server';
+            if (mode === 'socket') {
+              textEl.textContent = '✓ Connected to monitoring server (Socket.IO)';
+            } else {
+              textEl.textContent = '✓ Auto-refresh enabled (polling mode, every 10s)';
+            }
             break;
           case 'disconnected':
             textEl.textContent = '✗ Disconnected - attempting to reconnect...';
             break;
           case 'error':
             textEl.textContent = `⚠️ Connection error: ${message}`;
+            break;
+          case 'fallback':
+            textEl.textContent = '⚠️ Socket.IO unavailable - using polling fallback';
             break;
           default:
             textEl.textContent = 'Connecting to monitoring server...';
@@ -273,13 +199,248 @@
       }
     }
     
+    // Update a single website card with latest data (for polling mode)
+    async function updateWebsiteCard(websiteId) {
+      try {
+        const card = document.querySelector(`[data-website-id="${websiteId}"]`);
+        if (!card) return;
+        
+        // Fetch latest website data
+        const response = await fetch(`/api/websites/${websiteId}`);
+        const data = await response.json();
+        
+        if (!data.success || !data.data) return;
+        
+        const website = data.data;
+        const currentStatus = website.currentStatus;
+        
+        // Check if status changed (for notifications in polling mode)
+        const previousStatus = previousStates.get(websiteId);
+        if (previousStatus && previousStatus !== currentStatus) {
+          showNotification({
+            website: website.url,
+            previousStatus: previousStatus,
+            newStatus: currentStatus,
+            event: currentStatus === 'down' ? 'DOWN' : 'RECOVERED'
+          });
+        }
+        
+        // Store current status
+        previousStates.set(websiteId, currentStatus);
+        
+        // Update status badge
+        const statusBadge = card.querySelector('.status-badge');
+        if (statusBadge) {
+          statusBadge.className = `status-badge status-badge--${currentStatus}`;
+          statusBadge.innerHTML = currentStatus === 'up' ? '🟢 UP' : 
+                                 currentStatus === 'down' ? '🔴 DOWN' : '⚪ UNKNOWN';
+        }
+        
+        // Update card border
+        card.className = `website-card website-card--${currentStatus}`;
+        
+        // Update stats
+        const responseTime = card.querySelector('[data-stat="response-time"]');
+        if (responseTime && website.lastResponseTime) {
+          responseTime.textContent = website.lastResponseTime + 'ms';
+        }
+        
+        const statusCode = card.querySelector('[data-stat="status-code"]');
+        if (statusCode && website.lastStatusCode) {
+          statusCode.textContent = website.lastStatusCode;
+        }
+        
+        const lastChecked = card.querySelector('[data-stat="last-checked"]');
+        if (lastChecked && website.lastChecked) {
+          lastChecked.textContent = 'Last checked: ' + new Date(website.lastChecked).toLocaleString();
+        }
+        
+        // Update summary stats
+        updateSummaryStats();
+        
+        // Load detailed stats
+        await loadWebsiteStats(websiteId, card);
+        
+      } catch (error) {
+        console.error('Error updating website card:', websiteId, error);
+      }
+    }
+    
+    // Poll all websites for updates (fallback mode)
+    async function pollWebsites() {
+      console.log('📡 Polling websites for updates (fallback mode)...');
+      
+      for (const websiteId of websiteIds) {
+        await updateWebsiteCard(websiteId);
+      }
+    }
+    
+    // Start polling fallback
+    function startPolling() {
+      if (pollingTimer) return; // Already polling
+      
+      console.log('▶️ Starting polling fallback...');
+      connectionMode = 'polling';
+      updateConnectionStatus('connected', 'polling');
+      
+      // Initial poll
+      pollWebsites();
+      
+      // Set up recurring polling
+      pollingTimer = setInterval(pollWebsites, POLL_INTERVAL);
+    }
+    
+    // Stop polling fallback
+    function stopPolling() {
+      if (pollingTimer) {
+        console.log('⏸️ Stopping polling fallback...');
+        clearInterval(pollingTimer);
+        pollingTimer = null;
+      }
+    }
+    
+    // Switch to polling fallback mode
+    function switchToPollingFallback() {
+      console.warn('⚠️ Switching to polling fallback mode');
+      updateConnectionStatus('fallback');
+      
+      // Disconnect socket if connected
+      if (socket) {
+        socket.disconnect();
+        socket = null;
+      }
+      
+      // Start polling
+      startPolling();
+    }
+    
+    // Initialize Socket.IO with error handling and fallback
+    function initSocket() {
+      // Wait for socket.io library to load
+      if (typeof io === 'undefined') {
+        console.error('Socket.IO library failed to load. Switching to polling fallback...');
+        socketFailureCount = MAX_SOCKET_FAILURES;
+        switchToPollingFallback();
+        return;
+      }
+      
+      try {
+        // Connect to Socket.io with custom options for Hostinger
+        socket = io({
+          reconnection: true,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 5000,
+          reconnectionAttempts: MAX_SOCKET_FAILURES,
+          path: '/socket.io',
+          transports: ['polling'],  // Polling ONLY
+          upgrade: false,           // Disable WebSocket upgrade
+          timeout: 10000            // 10 second timeout
+        });
+        
+        // Socket connection handlers
+        socket.on('connect', () => {
+          console.log('✓ Connected to monitoring server via Socket.IO');
+          socketFailureCount = 0; // Reset failure count
+          connectionMode = 'socket';
+          updateConnectionStatus('connected', 'socket');
+          
+          // Stop polling if it was running
+          stopPolling();
+        });
+        
+        socket.on('connect_error', (error) => {
+          console.error('Socket.IO connection error:', error.message);
+          socketFailureCount++;
+          
+          if (socketFailureCount >= MAX_SOCKET_FAILURES) {
+            console.error(`❌ Socket.IO failed ${MAX_SOCKET_FAILURES} times. Switching to polling fallback.`);
+            switchToPollingFallback();
+          } else {
+            updateConnectionStatus('error', 'socket', error.message);
+          }
+        });
+        
+        socket.on('disconnect', (reason) => {
+          console.log('✗ Disconnected from monitoring server:', reason);
+          updateConnectionStatus('disconnected');
+          
+          // If disconnect was not intentional, consider fallback
+          if (reason === 'io server disconnect' || reason === 'transport close') {
+            socketFailureCount++;
+            if (socketFailureCount >= MAX_SOCKET_FAILURES) {
+              switchToPollingFallback();
+            }
+          }
+        });
+        
+        socket.on('reconnect_failed', () => {
+          console.error('❌ Socket.IO reconnection failed. Switching to polling fallback.');
+          switchToPollingFallback();
+        });
+        
+        // Handle check completed event
+        socket.on('checkCompleted', (data) => {
+          console.log('✓ Check completed (Socket.IO):', data);
+          
+          const websiteId = data.website.id;
+          const card = document.querySelector(`[data-website-id="${websiteId}"]`);
+          
+          if (card) {
+            // Update status badge
+            const statusBadge = card.querySelector('.status-badge');
+            if (statusBadge) {
+              const status = data.checkResult.status;
+              statusBadge.className = `status-badge status-badge--${status}`;
+              statusBadge.innerHTML = status === 'up' ? '🟢 UP' : '🔴 DOWN';
+            }
+            
+            // Update card border
+            card.className = `website-card website-card--${data.checkResult.status}`;
+            
+            // Update stats
+            const responseTime = card.querySelector('[data-stat="response-time"]');
+            if (responseTime) {
+              responseTime.textContent = data.checkResult.responseTime + 'ms';
+            }
+            
+            const statusCode = card.querySelector('[data-stat="status-code"]');
+            if (statusCode) {
+              statusCode.textContent = data.checkResult.statusCode || 'N/A';
+            }
+            
+            const lastChecked = card.querySelector('[data-stat="last-checked"]');
+            if (lastChecked) {
+              lastChecked.textContent = 'Last checked: ' + new Date(data.checkResult.timestamp).toLocaleString();
+            }
+            
+            // Update summary stats
+            updateSummaryStats();
+            
+            // Load stats for this website
+            loadWebsiteStats(websiteId, card);
+          }
+        });
+        
+        // Handle alert triggered event
+        socket.on('alertTriggered', (data) => {
+          console.log('🚨 Alert triggered (Socket.IO):', data);
+          showNotification(data);
+          updateSummaryStats();
+        });
+        
+      } catch (error) {
+        console.error('Failed to initialize Socket.IO:', error);
+        switchToPollingFallback();
+      }
+    }
+    
     // Show notification
     function showNotification(alert) {
       const notification = document.createElement('div');
-      notification.className = `notification notification--${alert.event} notification--slide-in`;
+      notification.className = `notification notification--${alert.event.toLowerCase()} notification--slide-in`;
       
       notification.innerHTML = `
-        <strong>${alert.event.toUpperCase()}!</strong><br>
+        <strong>${alert.event}!</strong><br>
         ${alert.website} is now ${alert.newStatus}
       `;
       
@@ -296,7 +457,7 @@
     document.addEventListener('DOMContentLoaded', () => {
       console.log('Dashboard loaded');
       
-      // Initialize Socket.IO
+      // Try Socket.IO first
       initSocket();
       
       // Load stats for all websites
@@ -326,6 +487,14 @@
             
             if (data.success) {
               console.log('✓ Manual check triggered for', websiteId);
+              
+              // In polling mode, wait a moment then refresh the card
+              if (connectionMode === 'polling') {
+                setTimeout(() => {
+                  updateWebsiteCard(websiteId);
+                }, 1000);
+              }
+              // In socket mode, the update will come via Socket.IO event
             }
           } catch (error) {
             console.error('Error:', error);
@@ -335,6 +504,29 @@
           }
         });
       });
+      
+      // Handle page visibility changes
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          // Only stop polling if in polling mode
+          if (connectionMode === 'polling') {
+            stopPolling();
+          }
+        } else {
+          // Resume polling if in polling mode
+          if (connectionMode === 'polling') {
+            startPolling();
+          }
+        }
+      });
+    });
+    
+    // Clean up on page unload
+    window.addEventListener('beforeunload', () => {
+      if (socket) {
+        socket.disconnect();
+      }
+      stopPolling();
     });
   </script>
 </body>
