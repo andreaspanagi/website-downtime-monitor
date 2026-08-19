@@ -53,13 +53,18 @@ const io = socketIo(server, {
   perMessageDeflate: false
 });
 
-// Debug Socket.IO connection attempts
+// Debug Socket.IO - detailed handshake logging
 io.engine.on('connection_error', (err) => {
   console.error('❌ Socket.IO connection_error:', err.code, err.message);
 });
 
 io.on('connection_error', (error) => {
   console.error('❌ Socket.IO connection_error event:', error);
+});
+
+// Most important: log when a Socket.IO client actually connects
+io.on('connect', (socket) => {
+  console.log('✅ Socket.IO client connect event:', socket.id);
 });
 
 // Make io globally accessible so monitorService can emit events to all connected clients
