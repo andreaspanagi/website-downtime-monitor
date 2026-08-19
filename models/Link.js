@@ -50,7 +50,8 @@ const linkSchema = new mongoose.Schema({
   // Timestamp when the link was first discovered
   discoveredAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
+    expires: 604800 // Auto-delete after 7 days (7 * 24 * 60 * 60 seconds)
   },
   
   // Number of times this link has been found during crawls

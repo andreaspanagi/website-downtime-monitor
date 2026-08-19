@@ -53,7 +53,8 @@ const alertSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
     required: true,
-    index: true // Index for faster queries by date
+    index: true, // Index for faster queries by date
+    expires: 604800 // Auto-delete after 7 days (7 * 24 * 60 * 60 seconds)
   },
   
   // Whether the alert has been acknowledged/read by user
